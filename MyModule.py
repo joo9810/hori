@@ -4,7 +4,8 @@ from datetime import datetime
 
 ADDRESS_API_KEY = "17a519eccd6f79f1bbbc522ec7defba6"
 WEATHER_API_KEY = "09834c917ca499fc931a9e925cbf582f6b830a9ef8211ad99759c18ceb1af7a5"
-address_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+keyword_url = "https://dapi.kakao.com/v2/local/search/keyword.json"
+address_url = "https://dapi.kakao.com/v2/local/search/address.json"
 weather_url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
 
 # 도구 함수 정의
@@ -80,7 +81,7 @@ def convert_base_time():
             return f"{base_time:>04}"
 
 def get_weather(city: str):
-    if city == "현재위치": city = "신당동"
+    if city == "현재위치": city = "대구 신당동"
 
     address_headers = {"Authorization": f"KakaoAK {ADDRESS_API_KEY}"}
     address_params = {"query": city}
@@ -92,6 +93,8 @@ def get_weather(city: str):
     lon = float(documents['x'])
     lat = float(documents['y'])
     nx, ny = convert_to_grid(lat, lon)
+
+    city_info = documents['address']['address_name']
 
     weather_params ={'serviceKey' : WEATHER_API_KEY, 
          'pageNo' : '1', 
@@ -108,7 +111,7 @@ def get_weather(city: str):
 
     try:
         weather_info = dict()
-        weather_info['city'] = city
+        weather_info['city'] = city_info
 
         SKY_dict = {'1': '맑음', '3': '구름많음', '4': '흐림'}
         PTY_dict = {'0': '없음', '1': '비', '2': '비/눈', '3': '눈', '4': '소나기'}
@@ -145,7 +148,7 @@ def search_address(location):
     headers = {"Authorization": f"KakaoAK {ADDRESS_API_KEY}"}
     params = {"query": location}
 
-    address_response = requests.get(address_url, headers=headers, params=params)
+    address_response = requests.get(keyword_url, headers=headers, params=params)
     address_data = address_response.json()
 
     # print(address_data)
