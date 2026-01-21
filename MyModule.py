@@ -1,6 +1,8 @@
+import os
+import json
 import math
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ADDRESS_API_KEY = "17a519eccd6f79f1bbbc522ec7defba6"
 WEATHER_API_KEY = "09834c917ca499fc931a9e925cbf582f6b830a9ef8211ad99759c18ceb1af7a5"
@@ -176,14 +178,152 @@ def search_address(location):
 
         return no_address_info
 
+ALARM_FILE = "alarms.json"
 
+def get_alarms():
+    """현재 등록된 모든 알람 목록을 가져옴"""
+    if not os.path.exists(ALARM_FILE):
+        return {"alarms": [], "count": 0, "message": "현재 설정된 알람이 없습니다."}
+    
+    with open(ALARM_FILE, "r", encoding="utf-8") as f:
+        alarms = json.load(f)
 
+    print(alarms)
 
+    return {
+        "alarms": alarms,
+        "count": len(alarms),
+        "message": "알람 목록을 성공적으로 불러왔습니다." if alarms else "현재 설정된 알람이 없습니다."
+    }
 
+def set_alarms(message=None, year=None, month=None, day=None, hour=None, minute=None, relative_day=0):
+    """
+    relative_day: 오늘=0, 내일=1, 모레=2 등으로 LLM이 숫자를 넘겨줌
+    """
+    data = get_alarms()
+    alarms = data["alarms"] if isinstance(data, dict) else []
 
+    # 기준 시간 설정 (현재 시간)
+    now = datetime.now()
 
+    # 날짜 계산
+    target_date = datetime(
+        year if year else now.year,
+        month if month else now.month,
+        day if day else now.day,
+        hour if hour else now.hour,
+        minute if minute else 0
+    )
 
+    # relative_day가 있으면 날짜를 더함
+    if relative_day:
+        target_date = target_date + timedelta(days=relative_day)
 
+    # 최종 문자열 생성 (YYYYMMDDTHHMM)
+    alarm_time = target_date.strftime("%Y%m%dT%H%M")
 
+    if message == None:
+        message = f"{target_date.month}월 {target_date.day}일 {target_date.hour}시 {target_date.minute}분 알람"
 
+    # 중복 체크
+    for alarm in alarms:
+        if alarm['time'] == alarm_time and alarm['message'] == message:
+                
+                print(alarms)
 
+                return {
+                    "status": "error",
+                    "time": alarm_time,
+                    "message_content": message,
+                    "message": f"같은 시간에 동일한 내용의 알람이 등록되어 있습니다."
+                }
+        
+    # 등록
+    new_alarm = {"time": alarm_time, "message": message}
+    alarms.append(new_alarm)
+
+    with open(ALARM_FILE, "w", encoding="utf-8") as f:
+        json.dump(alarms, f, ensure_ascii=False, indent=4)
+
+    print(alarms)
+
+    return {
+        "status": "success",
+        "time": alarm_time,
+        "message_content": message,
+        "message": "알람을 성공적으로 설정했습니다."
+    }
+
+def delete_alarm(message=None, year=None, month=None, day=None, hour=None, minute=None, relative_day=0):
+    """
+    입력된 시간과 메시지 정보를 조합하여 일치하는 알람을 찾아 삭제
+    """
+    data = get_alarms()
+    alarms = data["alarms"] if isinstance(data, dict) else []
+
+    if not alarms:
+        print(alarms)
+        return {
+            "status": "error",
+            "message": "삭제할 알람이 없습니다."
+        }
+
+    # 시간 정보가 하나라도 들어왔을 때만 시간 비교 수행
+    has_time_input = any([year, month, day, hour, minute, relative_day != 0])
+    target_time_str = None
+
+    if has_time_input:
+        now = datetime.now()
+        # 입력되지 않은 값은 현재 시간 기준으로 채우기
+        target_date = datetime(
+            year if year else now.year,
+            month if month else now.month,
+            day if day else now.day,
+            hour if hour else now.hour,
+            minute if minute else 0
+        )
+        # 상대 날짜 계산 적용
+        if relative_day:
+            target_date = target_date + timedelta(days=relative_day)
+
+        target_time_str = target_date.strftime("%Y%m%dT%H%M")
+
+    new_alarms = []
+    deleted_count = 0
+    found_time_but_different_message = False
+
+    for alarm in alarms:
+        is_time_match = (target_time_str is None) or (alarm['time'] == target_time_str) # 시간을 말하지 않았거나 시간이 일치할때
+        is_message_match = (message is None) or (message in alarm['message']) # 알람 내용을 말하지 않았거나 일치할때
+
+        if is_time_match and is_message_match:
+            deleted_count += 1 # 삭제 대상
+        else:
+            new_alarms.append(alarm) # 유지 대상
+
+    # 결과에 따른 응답 처리
+    if deleted_count == 0: # 삭제된 알람이 없을때
+        if has_time_input and message: # 시간과 알람 내용이 모두 있을때
+            return {
+                "status": "fail",
+                "message": f"{target_date.hour}시에는 '{message}' 알람이 등록되어 있지 않습니다."
+            }
+        elif has_time_input: # 시간만 있을때
+            return {
+                "status": "fail",
+                "message": f"{target_date.hour}시에는 등록된 알람이 없습니다."
+            }
+        else:
+            return {
+                "status": "fail",
+                "message": f"'{message}' 내용을 포함한 알람을 찾을 수 없습니다."
+            }
+    
+    # 최종 결과 저장
+    with open(ALARM_FILE, "w", encoding="utf-8") as f:
+        json.dump(new_alarms, f, ensure_ascii=False, indent=4)
+
+    return {
+        "status": "success",
+        "message": f"성공적으로 {deleted_count}개의 알람을 삭제했습니다."
+    }
