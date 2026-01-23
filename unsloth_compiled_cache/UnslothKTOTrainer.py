@@ -1,6 +1,6 @@
 """
-2026.1.2
-2026.1.2
+2026.1.3
+2026.1.3
 4.57.3
 0.24.0
 __UNSLOTH_VERSIONING__
@@ -39,7 +39,6 @@ import numpy as np
 from contextlib import nullcontext
 from torch.nn import functional as F
 import inspect
-import psutil
 from transformers import DataCollatorForSeq2Seq, DataCollatorForLanguageModeling as TransformersDataCollatorForLanguageModeling
 from transformers.training_args import ParallelMode
 
@@ -56,17 +55,19 @@ def prepare_for_training_mode(f):
     def wrapper(self, *args, **kwargs):
         # Enable training mode
         _was_training = None
+        # Get gradient checkpointing setting from training arguments
+        use_gc = getattr(self.args, 'gradient_checkpointing', True)
         if hasattr(self, 'model') and hasattr(self.model, "training"):
             _was_training = self.model.training
         if hasattr(self, 'model') and hasattr(self.model, "for_training"):
-            self.model.for_training()
+            self.model.for_training(use_gradient_checkpointing=use_gc)
         output = f(self, *args, **kwargs)
         # Restore previous mode when possible
         if hasattr(self, 'model') and hasattr(self.model, "for_inference"):
             if _was_training is False:
                 self.model.for_inference()
             elif _was_training is True and hasattr(self.model, "for_training"):
-                self.model.for_training()
+                self.model.for_training(use_gradient_checkpointing=use_gc)
         # Reset gradient checkpointing buffers to free memory while staying ready for next run
         try:
             reset_unsloth_gradient_checkpointing_buffers()
@@ -89,6 +90,51 @@ torch_compile_options = {
     "trace.enabled"     : False,
     "triton.cudagraphs" : False,
 }
+
+@torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options,)
+def chunked_hidden_states_selective_log_softmax(
+    hidden_states: torch.Tensor,
+    lm_head: torch.Tensor,
+    index: torch.Tensor,
+    chunks: int = 4,
+    logit_scale_multiply: float = 0.0,
+    logit_scale_divide: float = 0.0,
+    logit_softcapping: float = 0.0,
+    temperature: float = 1.0,
+) -> torch.Tensor:
+    # All Unsloth Zoo code licensed under AGPL3 
+    flat_hidden_states = hidden_states.reshape(-1, hidden_states.shape[-1]) 
+    flat_index = index.reshape(-1)                                    
+
+    chunked_hidden_states = torch.chunk(flat_hidden_states, chunks=chunks, dim=0)
+    chunked_index = torch.chunk(flat_index, chunks=chunks, dim=0)
+    
+    all_per_token_logps = []
+    
+    for chunk_hidden_states, chunk_index in zip(chunked_hidden_states, chunked_index):
+        chunk_logits = chunk_hidden_states.to(lm_head.dtype) @ lm_head.t()
+
+        if logit_scale_multiply != 0.0:
+            chunk_logits = chunk_logits * logit_scale_multiply
+        if logit_scale_divide != 0.0:
+            chunk_logits = chunk_logits / logit_scale_divide
+        if logit_softcapping != 0.0:
+            chunk_logits = chunk_logits * torch.tanh(chunk_logits / logit_softcapping)
+
+        chunk_logits = chunk_logits.to(torch.float32)
+
+        if temperature != 1.0:
+            chunk_logits = chunk_logits / temperature
+
+        selected_logits = torch.gather(chunk_logits, dim=-1, index=chunk_index.unsqueeze(-1)).squeeze(-1)
+        logsumexp_values = torch.logsumexp(chunk_logits, dim=-1)
+        per_token_logps = selected_logits - logsumexp_values
+        all_per_token_logps.append(per_token_logps)
+    
+    all_per_token_logps = torch.concat(all_per_token_logps)
+    
+    all_per_token_logps = all_per_token_logps.reshape((hidden_states.shape[0], hidden_states.shape[1]))
+    return all_per_token_logps
 
 @torch.compile(dynamic = True, fullgraph = True, options = torch_compile_options,)
 def chunked_selective_log_softmax(logits, index):
@@ -210,6 +256,46 @@ def align_logprobs_with_mask(
     padded_logprobs[valid_rows, valid_cols] = valid_vals
 
     return padded_logprobs
+
+def autotune_batch_and_chunks(
+    total_input_rows, 
+    seq_len, 
+    hidden_size, 
+    vocab_size, 
+    dtype_bytes=16,
+    multiplier=None
+):
+    if multiplier is None:
+        final_m = max(4, seq_len // 4096)
+    else:
+        final_m = multiplier
+    
+    if torch.cuda.is_available():
+        free_bytes, _ = torch.cuda.mem_get_info()
+        limit_gb = (free_bytes / (1024**3))*.80
+
+    bytes_to_gb = 1024**3
+
+    b_vals = torch.arange(total_input_rows, 0, -1, device='cpu', dtype=torch.float32)
+
+    hidden_gb = (b_vals * seq_len * hidden_size * dtype_bytes) / bytes_to_gb
+
+    base_logits = ((b_vals/total_input_rows) * b_vals * seq_len * vocab_size * dtype_bytes) / bytes_to_gb
+    logits_gb = base_logits / final_m
+
+    total_mem_gb = hidden_gb + logits_gb
+    
+    valid_mask = total_mem_gb <= limit_gb
+    valid_indices = torch.nonzero(valid_mask, as_tuple=False)
+
+    if valid_indices.shape[0] == 0:
+        #This means your GPU will OOM
+        return 4, final_m
+
+    best_idx = valid_indices[0].item()
+    final_b = int(b_vals[best_idx].item())
+
+    return final_b, final_m
 @dataclass
 class UnslothKTOConfig(KTOConfig):
     """
@@ -287,6 +373,14 @@ class UnslothKTOConfig(KTOConfig):
     unsloth_num_chunks : Optional[int] = field(
         default = -1,
         metadata = {'help': 'Chunk size to reduce memory usage. -1 is most efficient.'},
+    )
+    unsloth_logit_chunk_multiplier : Optional[int] = field(
+            default = None,
+            metadata = {'help': 'Multiplier for chunked logit computations.'},
+        )
+    unsloth_grpo_mini_batch : Optional[int] = field(
+        default = None,
+        metadata = {'help': 'Mini batch size for GRPO hidden state accumulation. Default is None unless user defines it.'},
     )
     max_seq_length : Optional[int] = field(
         default = None,
@@ -445,6 +539,8 @@ class UnslothKTOConfig(KTOConfig):
         base_model_attribute_name = 'model',
         vllm_sampling_params = None,
         unsloth_num_chunks = -1,
+        unsloth_logit_chunk_multiplier = None, 
+        unsloth_grpo_mini_batch = None, 
         max_seq_length = None,
         **kwargs,
     ):
@@ -614,6 +710,15 @@ class UnslothKTOConfig(KTOConfig):
             base_model_attribute_name = base_model_attribute_name,**kwargs)
         self.vllm_sampling_params = vllm_sampling_params
         self.unsloth_num_chunks = unsloth_num_chunks
+        if unsloth_grpo_mini_batch is not None:
+            if self.generation_batch_size >= unsloth_grpo_mini_batch:
+                self.unsloth_grpo_mini_batch = unsloth_grpo_mini_batch
+            else:
+                raise ValueError(
+                    f"Unsloth GRPO mini batch size needs to be less than or equal to the effective generation batch size, "
+                    f"which is self.per_device_train_batch_size * gradient_accumulation_steps."
+                )
+        self.unsloth_logit_chunk_multiplier = unsloth_logit_chunk_multiplier
         self.max_seq_length = max_seq_length
 pass
 

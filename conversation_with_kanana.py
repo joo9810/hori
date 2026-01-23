@@ -7,7 +7,7 @@ from datetime import datetime
 from llama_cpp import Llama
 from transformers import AutoTokenizer
 from collections import deque
-from MyModule import get_current_time, get_current_date, get_weather, search_address, get_alarms, set_alarms, delete_alarm
+from MyModule import get_current_time, get_current_date, get_weather, search_address, get_alarms, set_alarms, delete_alarms
 
 import sys
 sys.path.append("/home/user/work/MeloTTS")
@@ -37,7 +37,7 @@ def get_memory_usage(label=""):
 get_memory_usage("초기 상태")
 
 # 모델 & 토크나이저 준비
-model_path = "/home/user/work/model/kanana_q4_k_m.gguf"
+model_path = "/home/user/work/model/kanana_q4_k_m_v3.gguf"
 tokenizer_path = "/home/user/work/model/kanana-1.5-2.1b-instruct-2505"
 
 llm = Llama(
@@ -74,7 +74,7 @@ TOOLS = {
     "search_address": search_address,
     "get_alarms": get_alarms,
     "set_alarms": set_alarms,
-    "delete_alarm": delete_alarm,
+    "delete_alarm": delete_alarms,
 }
 
 TOOL_DEFINITIONS = [
@@ -98,13 +98,13 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "get_weather",
-        "description": "특정 지역의 날씨 정보를 조회합니다.",
+        "description": "특정 도시의 날씨 정보를 조회합니다.",
         "parameters": {
             "type": "object",
             "properties": {
                 "city": {
                     "type": "string",
-                    "description": "지역 이름"
+                    "description": "사용자가 언급힌 도시 이름을 그대로 사용하세요."
                 }
             },
             "required": ["city"]
@@ -130,13 +130,13 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "set_alarms",
-        "description": "새로운 알람을 예약합니다.",
+        "description": "새로운 알람을 예약합니다. 사용자가 명시한 시간과 날짜 정보를 모두 추출하여 반드시 포함해야 합니다.",
         "parameters": {
             "type": "object",
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "알람 시 알려줄 내용 (예: 당뇨약 먹기)"
+                    "description": "알람 시 알려줄 내용"
                 },
                 "year": {
                     "type": "integer",
@@ -161,20 +161,32 @@ TOOL_DEFINITIONS = [
                 "relative_day": {
                     "type": "integer",
                     "description": "오늘 기준 날짜 차이. 오늘=0, 내일=1, 모레=2, 글피=3 등등"
+                },
+                "week_offset": {
+                    "type": "integer",
+                    "description": "주 단위 차이. 이번 주=0, 다음 주=1"
+                },
+                "day_of_week": {
+                    "type": "string",
+                    "description": "요일 (예: '월요일', '화요일', ..., '일요일')"
+                },
+                "is_ampm_specified": {
+                    "type": "boolean",
+                    "description": "사용자가 '오전', '오후', '아침', '밤' 등 시간을 지정했다면 True, 지정하지 않았다면 False를 주세요."
                 }
             },
             "required": ["hour"]
         }
     },
     {
-        "name": "delete_alarm",
+        "name": "delete_alarms",
         "description": "등록된 알람을 삭제합니다",
         "parameters": {
             "type": "object",
             "properties": {
                 "message": {
                     "type": "string",
-                    "description": "삭제할 알람의 메시지 내용 (선택 사항)"
+                    "description": "삭제할 알람의 메시지 내용"
                 },
                 "year": {
                     "type": "integer",
@@ -199,6 +211,18 @@ TOOL_DEFINITIONS = [
                 "relative_day": {
                     "type": "integer",
                     "description": "오늘 기준 날짜 차이. 오늘=0, 내일=1, 모레=2, 글피=3 등등"
+                },
+                "week_offset": {
+                    "type": "integer",
+                    "description": "주 단위 차이. 이번 주=0, 다음 주=1"
+                },
+                "day_of_week": {
+                    "type": "string",
+                    "description": "요일 (예: '월요일', '화요일', ..., '일요일')"
+                },
+                "is_ampm_specified": {
+                    "type": "boolean",
+                    "description": "사용자가 '오전', '오후', '아침', '밤' 등 시간을 지정했다면 True, 지정하지 않았다면 False를 주세요."
                 }
             }
         }
@@ -241,10 +265,9 @@ total_messages = deque(maxlen=MAX_HISTORY)
 alarm_list = []
 
 def ask_hori(question):
-    total_messages.append({
-        "role": "user", 
-        "content": question
-    })
+    total_messages.append(
+        {"role": "user", "content": question}
+    )
 
     formatted_text = tokenizer.apply_chat_template(
         list(total_messages),
@@ -281,13 +304,11 @@ def ask_hori(question):
     # --- [패턴 매칭 로직] ---
     pattern = r'<function=(\w+)>(.+?)</function>' 
     matches = re.finditer(pattern, full_response)
-    has_called_tool = False
 
     # 보조 도구 실행 내역을 담을 리스트
     tool_calls_found = list(matches)
 
     if tool_calls_found:
-        has_called_tool = True
         # 어시스턴트의 '생각(도구 호출 요청)'을 대화 기록에 추가
         total_messages.append({
             "role": "assistant",
@@ -301,6 +322,10 @@ def ask_hori(question):
             args = json.loads(args_str)
 
             tool_result = TOOLS[func_name](**args)
+
+            # 도구 실행 결과
+            print(tool_result)
+
             # 도구 실행 결과를 대화 기록에 각각 추가
             total_messages.append({
             "role": "tool",
@@ -334,7 +359,7 @@ def ask_hori(question):
             text = chunk['choices'][0]['text'] 
             print(text, end="", flush=True) 
             final_response += text 
-        get_memory_usage("2차 응답 생성 직후")
+        # get_memory_usage("2차 응답 생성 직후")
 
         total_messages.append({
             "role": "assistant",
@@ -361,8 +386,8 @@ def number_to_korean(text):
         '01': '한', '02': '두', '03': '세', '04': '네', '05': '다섯',
         '6': '여섯', '7': '일곱', '8': '여덟', '9': '아홉', '10': '열',
         '06': '여섯', '07': '일곱', '08': '여덟', '09': '아홉',
-        '11': '열한', '12': '열두', '13': '열세', '14': '열네', '15': '열다섯',
-        '16': '열여섯', '17': '열일곱', '18': '열여덟', '19': '열아홉'
+        '11': '열한', '12': '열두'# , '13': '열세', '14': '열네', '15': '열다섯',
+        # '16': '열여섯', '17': '열일곱', '18': '열여덟', '19': '열아홉'
     }
 
     # '시' 앞의 숫자 처리
