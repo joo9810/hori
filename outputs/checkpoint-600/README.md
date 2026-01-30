@@ -1,9 +1,9 @@
 ---
-base_model: ../model/kanana-1.5-2.1b-instruct-2505
+base_model: ../model/kanana-1.5-8b-instruct-2505
 library_name: peft
 pipeline_tag: text-generation
 tags:
-- base_model:adapter:../model/kanana-1.5-2.1b-instruct-2505
+- base_model:adapter:../model/kanana-1.5-8b-instruct-2505
 - lora
 - sft
 - transformers

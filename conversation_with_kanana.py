@@ -37,8 +37,8 @@ def get_memory_usage(label=""):
 get_memory_usage("초기 상태")
 
 # 모델 & 토크나이저 준비
-model_path = "/home/user/work/model/kanana_q4_k_m_v3.gguf"
-tokenizer_path = "/home/user/work/model/kanana-1.5-2.1b-instruct-2505"
+model_path = "/home/user/work/model/kanana_q4_k_m_8B.gguf"
+tokenizer_path = "/home/user/work/model/kanana-1.5-8b-instruct-2505"
 
 llm = Llama(
     model_path = model_path,
@@ -265,6 +265,9 @@ total_messages = deque(maxlen=MAX_HISTORY)
 alarm_list = []
 
 def ask_hori(question):
+    # total_messages.append(
+    # {"role": "system", "content": "사용자가 구체적인 지역명을 언급하지 않았다면, 이전 대화의 지역을 유추하지 말고 입력된 텍스트에서만 지역명을 추출하세요."}
+    # )
     total_messages.append(
         {"role": "user", "content": question}
     )
@@ -336,8 +339,7 @@ def ask_hori(question):
         formatted_text_2 = tokenizer.apply_chat_template( 
             list(total_messages), 
             tokenize=False, 
-            add_generation_prompt=True,
-            tools=TOOL_DEFINITIONS
+            add_generation_prompt=True
         )
 
         # BOS 수동 제거
