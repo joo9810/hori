@@ -38,7 +38,7 @@ def get_memory_usage(label=""):
 get_memory_usage("초기 상태")
 
 # 모델 & 토크나이저 준비
-model_path = "/home/user/work/model/kanana_q4_k_m_8B_v2.gguf"
+model_path = "/home/user/work/model/kanana_q4_k_m_8B_v4.gguf"
 tokenizer_path = "/home/user/work/model/kanana-1.5-8b-instruct-2505"
 
 llm = Llama(
@@ -124,15 +124,15 @@ TOOL_DEFINITIONS = [
     }
 ]
 
-SYSTEM_INSTRUCTION = """사용자가 구체적인 지역명을 언급하지 않았다면, 이전 대화의 지역을 유추하지 말고 입력된 텍스트에서만 지역명을 추출하세요."""
+SYSTEM_INSTRUCTION = """사용자가 구체적인 지역명을 언급하지 않았다면, 지역을 유추하지 말고 입력된 텍스트에서만 지역명을 추출하세요."""
 
 # --- [모델 예열] ---
 def warmup_llm():
     dummy_messages = [{"role": "user", "content": "안녕"}]
 
     prompt = tokenizer.apply_chat_template(
-        # [{"role": "system", "content": SYSTEM_INSTRUCTION}] + dummy_messages,
-        dummy_messages,
+        [{"role": "system", "content": SYSTEM_INSTRUCTION}] + dummy_messages,
+        # dummy_messages,
         tokenize=False,
         add_generation_prompt=True,
         add_bos=False,
@@ -167,8 +167,8 @@ def ask_hori(question):
         {"role": "user", "content": question}
     )
 
-    # messages_for_llm = [{"role": "system", "content": SYSTEM_INSTRUCTION}] + list(history_messages)
-    messages_for_llm = list(history_messages)
+    messages_for_llm = [{"role": "system", "content": SYSTEM_INSTRUCTION}] + list(history_messages)
+    # messages_for_llm = list(history_messages)
 
     formatted_text = tokenizer.apply_chat_template(
         messages_for_llm,
@@ -187,7 +187,7 @@ def ask_hori(question):
 
     output = llm(
         formatted_text,
-        max_tokens=2048,
+        max_tokens=512,
         stop=[tokenizer.eos_token],
         temperature=0.1,
         top_p=0.95,
@@ -249,7 +249,7 @@ def ask_hori(question):
 
         output2 = llm( 
             formatted_text_2, 
-            max_tokens=2048, 
+            max_tokens=512, 
             stop=[tokenizer.eos_token], 
             temperature=0.1, 
             top_p=0.95, 

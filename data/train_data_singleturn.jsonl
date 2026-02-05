@@ -733,8 +733,6 @@
 {"messages":[{"role":"user","content":"약 언제 먹는지 헷갈려"},{"role":"assistant","content":"약 봉투에 적힌 시간을 기준으로 드시는 게 가장 안전해요. 아침·점심·저녁으로 나눠두면 덜 헷갈려요."}]}
 {"messages":[{"role":"user","content":"오늘 밥 뭐가 좋을까"},{"role":"assistant","content":"속이 편한 국이나 따뜻한 음식이 좋아 보여요. 너무 짜거나 기름진 음식은 조금만 드시는 게 좋아요."}]}
 {"messages":[{"role":"user","content":"밖에 미세먼지 어때"},{"role":"assistant","content":"오늘은 미세먼지가 약간 있는 편이에요. 외출하실 땐 마스크 쓰시면 호흡이 한결 편하실 거예요."}]}
-{"messages":[{"role":"user","content":"세탁은 오늘 해도 될까"},{"role":"assistant","content":"오늘은 습도가 높지 않아서 세탁하기 괜찮아 보여요. 환기도 같이 해주시면 더 좋아요."}]}
-{"messages":[{"role":"system","content":"정보: 2025년 10월 1일 9시 12분 일요일"},{"role":"user","content":"지금 시간이 몇 시지? 10시까지 출근인데"},{"role":"assistant","content":"현재 시간은 9시 12분입니다. 지각하지 않게 조금 서두르세요!"}]}
 {"messages":[{"role":"user","content":"쓰레기 언제 내놓는 게 맞지"},{"role":"assistant","content":"보통은 해가 진 뒤에 내놓는 게 좋아요. 지역마다 다를 수 있으니 안내문도 한 번 확인해 보세요."}]}
 {"messages":[{"role":"user","content":"전기세 아끼려면"},{"role":"assistant","content":"사용하지 않는 전자기기는 플러그를 뽑아두는 게 도움이 돼요. 조명도 필요한 곳만 켜두시면 좋아요."}]}
 {"messages":[{"role":"user","content":"요즘 잠이 잘 안 와"},{"role":"assistant","content":"잠들기 전에 TV나 휴대폰을 조금 줄여보세요. 따뜻한 물로 손이나 발을 씻는 것도 도움이 돼요."}]}

@@ -183,253 +183,149 @@ ALARM_FILE = "alarms.json"
 def get_alarms():
     """현재 등록된 모든 알람 목록을 가져옴"""
     if not os.path.exists(ALARM_FILE):
-        return {"alarms": [], "count": 0, "message": "현재 설정된 알람이 없습니다."}
+        return {"alarms": [], "count": 0}
     
     with open(ALARM_FILE, "r", encoding="utf-8") as f:
         alarms = json.load(f)
 
-    print(alarms)
+    # print(alarms)
 
-    return {
-        "alarms": alarms,
-        "count": len(alarms),
-        "message": "알람 목록을 성공적으로 불러왔습니다." if alarms else "현재 설정된 알람이 없습니다."
-    }
+    return {"alarms": alarms, "count": len(alarms)}
 
 def set_alarms(
-        message=None, 
-        year=None, month=None, day=None, 
-        hour=None, minute=0, 
-        relative_day=0, 
-        week_offset=0,      # 이번 주=0, 다음 주=1
-        day_of_week=None,   # "월요일", "화요일" 등
-        is_ampm_specified=False
+        hour: int,
+        minute: int = 0,
+        relative_date: int = None,
+        label: str = "알람",
+        days: list = None,
+        repeat: bool = False
     ):
     """
-    relative_day: 오늘=0, 내일=1, 모레=2 등으로 LLM이 숫자를 넘겨줌
+    사용자가 말한 시간과 요일 정보를 바탕으로 알람을 등록
     """
+    if days is None:
+        days = [0] * 7
+
     data = get_alarms()
-    alarms = data["alarms"] if isinstance(data, dict) else []
+    alarms = data["alarms"]
+    days_list = ["월", "화", "수", "목", "금", "토", "일"]
 
-    # 기준 시간 설정 (현재 시간)
-    now = datetime.now()
+    # 요일이 명시되었다면 relative_date는 계산하지 않음
+    # 만약에 오늘이 화요일인데 사용자가 "모레 수요일 저녁 7시에 식사 알람 등록해줘." <= 모순 발생
+    # 일반적으로 relative_date보다 days가 더 구체적인 의도일 가능성이 높으므로 days를 우선적으로 사용
+    if any(day == 1 for day in days):   # 리스트의 값 중에 하나라도 1이 있으면 해당 요일을 명시했다는 의미이므로 그 요일을 사용
+        pass
+    elif relative_date is not None:
+        weekday_num = (datetime.today().weekday() + relative_date) % 7
+        days[weekday_num] = 1
 
-    # 요일 처리 로직 (day_of_week가 있을 경우)
-    if day_of_week:
-        # 요일 매핑 (0:월, 1:화, ..., 6:일)
-        days_map = {"월요일": 0, "화요일": 1, "수요일": 2, "목요일": 3, "금요일": 4, "토요일": 5, "일요일": 6}
-        target_weekday = days_map.get(day_of_week)
+    # 병합된 알람이 있을 시에 None이 아니게 됨
+    target_alarm = None
 
-        if target_weekday is not None:
-            # 현재 요일과 목표 요일 차이 계산
-            days_ahead = target_weekday - now.weekday()
-
-            # 다음 주라면 7일을 더함, 이번 주인데 이미 지났어도 7일을 더함
-            if week_offset > 0:
-                days_ahead += 7 * week_offset
-            elif days_ahead < 0: # 이번 주라고 했는데 이미 지난 요일인 경우(사용자 실수) 다음 주로 넘김
-                days_ahead += 7
-
-            relative_day = days_ahead
-
-    # 날짜 계산
-    target_date = datetime(
-        year if year else now.year,
-        month if month else now.month,
-        day if day else now.day,
-        hour if hour is not None else now.hour,
-        minute if minute is not None else 0
-    )
-
-    # relative_day가 있으면 날짜를 더함
-    if relative_day:
-        target_date = target_date + timedelta(days=relative_day)
-
-    # 생성된 시간이 '현재보다 과거'일 때만 작동
-    if target_date <= now:
-        # 사용자가 "오전/오후"를 명확히 말했다면, 12시간 보정을 하지 않고 바로 다음날로 넘김
-        if is_ampm_specified:
-            target_date = target_date + timedelta(days=1)
-        # "오전/오후"를 말하지 않았을 경우
-        else:
-            # 예) 7시에 알람 설정해줘
-            if hour is not None and hour < 12:
-                future_attempt = target_date + timedelta(hours=12)
-                # 현재가 오후 6시일 경우 12시간 뒤인 오후 7시에 알람이 설정
-                if future_attempt > now:
-                    target_date = future_attempt
-                # 현재가 오후 8시일 경우 12시간 뒤인 오후 7시도 과거이기 때문에 하루 뒤인 내일 오전 7시에 알람이 설정
-                else:
-                    target_date = target_date + timedelta(days=1)
-            # 예) 19시에 알람 설정해줘
-            else:
-                target_date = target_date + timedelta(days=1)
-        
-
-    # 최종 문자열 생성 (YYYYMMDDTHHMM)
-    alarm_time = target_date.strftime("%Y%m%dT%H%M")
-
-    if message == None:
-        message = f"{target_date.month}월 {target_date.day}일 {target_date.hour}시 {target_date.minute}분 알람"
-
-    # 중복 체크
+    # 기존 알람 탐색 및 중복 요일 체크
     for alarm in alarms:
-        if alarm['time'] == alarm_time and alarm['message'] == message:
-                
-                # print(alarms)
+        # 알람의 시간과 내용이 모두 같을 경우 (중복 처리 할지, 요일을 합칠지)
+        if alarm['hour'] == hour and alarm['minute'] == minute and alarm['label'] == label:
+            # 요일 리스트 합치기
+            merged_days = [x + y for x, y in zip(days, alarm['days'])]
+            # 예) a = [1, 0, 0, 0, 0, 0, 1], b = [0, 1, 0, 0, 0, 0, 0]
+            # 결과) [1, 1, 0, 0, 0, 0, 1]
 
+            overlap_days_list = [days_list[idx] for idx, day in enumerate(merged_days) if day >= 2]
+            # 리스트에 2이상(겹치는 경우)의 부분이 존재하면 중복 안내
+            # if any(day >= 2 for day in merged_days):
+            if overlap_days_list:
                 return {
                     "status": "error",
-                    "time": alarm_time,
-                    "message_content": message,
-                    "message": f"같은 시간에 동일한 내용의 알람이 등록되어 있습니다."
+                    "message": f"이미 해당 시간에 겹치는 요일{overlap_days_list}의 알람이 있습니다."
                 }
-        
-    # 등록
-    new_alarm = {"time": alarm_time, "message": message}
-    alarms.append(new_alarm)
+            # 안내 메시지용 요일 리스트
+            bef_alarm_days_list = [days_list[idx] for idx, day in enumerate(alarm['days']) if day == 1]
+            add_alarm_days_list = [days_list[idx] for idx, day in enumerate(days) if day == 1]
+            # 업데이트 할 타겟 알람 설정
+            target_alarm = alarm
+            target_alarm['days'] = merged_days  # 중복 없으면 병합된 리스트 적용
+            break
 
+    # 새 알람 추가 또는 업데이트
+    if target_alarm:    # 병합이 된 경우
+        message = f"기존 알람{bef_alarm_days_list}에 요일{add_alarm_days_list}을 추가했습니다."
+        final_days = target_alarm['days']
+    else:   # 병합이 안 된 경우
+        new_alarm = {
+            "hour": hour,
+            "minute": minute,
+            "label": label,
+            "days": days,
+            "repeat": repeat
+        }
+        alarms.append(new_alarm)
+        message = "알람을 성공적으로 설정했습니다."
+        final_days = days
+
+    # 파일 저장
     with open(ALARM_FILE, "w", encoding="utf-8") as f:
         json.dump(alarms, f, ensure_ascii=False, indent=4)
 
-    # print(alarms)
-
-    days_ko = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
-    target_weekday_str = days_ko[target_date.weekday()]
-
     return {
         "status": "success",
-        "time": alarm_time,
-        "day_of_week": target_weekday_str,  # 요일 정보 추가 (예: "금요일")
-        "message_content": message,
-        "message": "알람을 성공적으로 설정했습니다."
+        "hour": hour,
+        "minute": minute,
+        "label": label,
+        "days": final_days,
+        "repeat": repeat,
+        "message": message
     }
 
 def delete_alarms(
-        message=None, 
-        year=None, month=None, day=None, 
-        hour=None, minute=0,
-        relative_day=0, 
-        week_offset=0,      # 이번 주=0, 다음 주=1
-        day_of_week=None,   # "월요일", "화요일" 등
-        is_ampm_specified=False):
+        hour: int = None,
+        minute: int = None,
+        label: str = None,
+        repeat_days: list = None
+    ):
     """
-    입력된 시간과 메시지 정보를 조합하여 일치하는 알람을 찾아 삭제
+    등록된 알람 중 조건(시간, 이름, 요일)이 일치하는 알람을 찾아 삭제
     """
     data = get_alarms()
     alarms = data["alarms"] if isinstance(data, dict) else []
 
     if not alarms:
-        # print(alarms)
         return {"status": "error", "message": "삭제할 알람이 없습니다."}
-    
-    now = datetime.now()
-
-    # 요일 및 주차 계산 로직
-    if day_of_week:
-        # 요일 매핑 (0:월, 1:화, ..., 6:일)
-        days_map = {"월요일": 0, "화요일": 1, "수요일": 2, "목요일": 3, "금요일": 4, "토요일": 5, "일요일": 6}
-        target_weekday = days_map.get(day_of_week)
-
-        if target_weekday is not None:
-            # 현재 요일과 목표 요일 차이 계산
-            days_ahead = target_weekday - now.weekday()
-
-            # 다음 주라면 7일을 더함, 이번 주인데 이미 지났어도 7일을 더함
-            if week_offset > 0:
-                days_ahead += 7 * week_offset
-            elif days_ahead < 0: # 이번 주라고 했는데 이미 지난 요일인 경우(사용자 실수) 다음 주로 넘김
-                days_ahead += 7
-
-            relative_day = days_ahead
-
-    # 시간 정보가 하나라도 들어왔을 때만 시간 비교 수행
-    has_time_input = any([year, month, day, hour is not None, minute, relative_day != 0, day_of_week])
-    # hour를 is not None으로 둔 이유는 사용자가 자정(12시)
-    target_time_str = None
-
-    if has_time_input:
-        # 입력되지 않은 값은 현재 시간 기준으로 채우기
-        target_date = datetime(
-            year if year else now.year,
-            month if month else now.month,
-            day if day else now.day,
-            hour if hour is not None else now.hour,
-            minute if minute is not None else 0
-        )
-        # 상대 날짜 계산 적용
-        if relative_day:
-            target_date = target_date + timedelta(days=relative_day)
-
-        # 생성된 시간이 '현재보다 과거'일 때만 작동
-        if target_date <= now:
-            # "오전/오후"를 명확하게 언급했을 경우
-            if is_ampm_specified:
-                target_date = target_date + timedelta(days=1)
-            # "오전/오후"를 언급하지 않았을 경우
-            else:
-                if hour is not None and hour < 12:
-                    future_attempt = target_date + timedelta(hours=12)
-                    if future_attempt > now:
-                        target_date = future_attempt
-                    else:
-                        target_date = target_date + timedelta(days=1)
-                else:
-                    target_date = target_date + timedelta(days=1)
-
-        target_time_str = target_date.strftime("%Y%m%dT%H%M")
 
     new_alarms = []
     deleted_alarms = []
     deleted_count = 0
 
-    # 날짜 정보는 있지만 구체적인 시(hour)가 입력되지 않았는지 확인
-    # hour is None이면 해당 날짜는 모든 알람을 대상으로 함
-    is_date_only_search = has_time_input and (hour is None) # 예) "일요일 알람 모두 삭제해줘"
-
     for alarm in alarms:
-        # 시간 매칭 로직 변경
-        if target_time_str is None: # 시간을 말하지 않고 메시지만 말했을때 (예: 당뇨약 알람 삭제해줘)
-            is_time_match = True
-        elif is_date_only_search:
-            # 시간(hour)을 안썼다면 날짜 부분(앞 8자리, 예: 20260125)만 일치하는지 확인
-            is_time_match = alarm['time'].startswith(target_date.strftime("%Y%m%d"))
-        else:
-            # 시간까지 썼다면 전체 문자열 일치 확인
-            is_time_match = (alarm['time'] == target_time_str)
+        # 매칭 조건 확인 (입력된 값이 있는 경우에만 비교)
+        is_match = True
 
-        is_message_match = (message is None) or (message in alarm['message']) # 알람 내용을 말하지 않았거나 일치할때
+        if hour is not None and alarm.get('hour') != hour:
+            is_match = False
+        if minute is not None and alarm.get('minute') != minute:
+            is_match = False
+        if label is not None and (label not in alarm.get('label')):
+            is_match = False
+        if repeat_days is not None and alarm.get('repeat_days') != repeat_days:
+            is_match = False
 
-        if is_time_match and is_message_match:
-            deleted_count += 1 # 삭제 대상
+        # 모든 입력 조건이 일치하면 삭제 대상으로 간주
+        if is_match and any([hour is not None, label is not None, repeat_days is not None]):
+            deleted_count += 1
             deleted_alarms.append(alarm)
         else:
-            new_alarms.append(alarm) # 유지 대상
+            new_alarms.append(alarm)
 
-    # 결과에 따른 응답 처리
-    if deleted_count == 0: # 삭제된 알람이 없을때
-        if has_time_input and message: # 시간과 알람 내용이 모두 있을때
-            return {
-                "status": "fail",
-                "message": f"{target_date.hour}시에는 '{message}' 알람이 등록되어 있지 않습니다."
-            }
-        elif has_time_input: # 시간만 있을때
-            return {
-                "status": "fail",
-                "message": f"{target_date.hour}시에는 등록된 알람이 없습니다."
-            }
-        else:
-            return {
-                "status": "fail",
-                "message": f"'{message}' 내용을 포함한 알람을 찾을 수 없습니다."
-            }
+    if deleted_count == 0:
+        return {"status": "fail", "message": "일치하는 알람을 찾을 수 없습니다."}
     
-    # 최종 결과 저장
+    # 파일 저장
     with open(ALARM_FILE, "w", encoding="utf-8") as f:
         json.dump(new_alarms, f, ensure_ascii=False, indent=4)
 
     return {
         "status": "success",
+        "deleted_count": deleted_count,
         "deleted_alarms": deleted_alarms,
         "message": f"성공적으로 {deleted_count}개의 알람을 삭제했습니다."
     }

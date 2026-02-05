@@ -7,7 +7,7 @@ from datetime import datetime
 from llama_cpp import Llama
 from transformers import AutoTokenizer
 from collections import deque
-from MyModule import get_current_time, get_current_date, get_weather, search_address, get_alarms, set_alarms, delete_alarms
+from MyModule2 import get_current_time, get_current_date, get_weather, search_address, get_alarms, set_alarms, delete_alarms
 
 import sys
 sys.path.append("/home/user/work/MeloTTS")
@@ -37,7 +37,7 @@ def get_memory_usage(label=""):
 get_memory_usage("초기 상태")
 
 # 모델 & 토크나이저 준비
-model_path = "/home/user/work/model/kanana_q4_k_m_8B.gguf"
+model_path = "/home/user/work/model/kanana_q4_k_m_8B_v4.gguf"
 tokenizer_path = "/home/user/work/model/kanana-1.5-8b-instruct-2505"
 
 llm = Llama(
@@ -289,7 +289,7 @@ def ask_hori(question):
 
     output = llm(
         formatted_text,
-        max_tokens=2048,
+        max_tokens=512,
         stop=[tokenizer.eos_token],
         temperature=0.1,
         top_p=0.95,
@@ -306,7 +306,7 @@ def ask_hori(question):
 
     # --- [패턴 매칭 로직] ---
     pattern = r'<function=(\w+)>(.+?)</function>' 
-    matches = re.finditer(pattern, full_response)
+    matches = re.finditer(pattern, full_response)   # 호출된 함수가 여러 개일 경우. (예: <function=(delete_alarms)>()</function><function=(set_alarms)>()</function>)
 
     # 보조 도구 실행 내역을 담을 리스트
     tool_calls_found = list(matches)
@@ -348,7 +348,7 @@ def ask_hori(question):
 
         output2 = llm( 
             formatted_text_2, 
-            max_tokens=2048, 
+            max_tokens=512, 
             stop=[tokenizer.eos_token], 
             temperature=0.1, 
             top_p=0.95, 
@@ -399,7 +399,7 @@ def number_to_korean(text):
         if num in pure_korean_map:
             return pure_korean_map[num] + unit
         return num + unit
-    
+
     # '시', '개', '명', '살' 등의 단위 앞에 오는 숫자를 처리
     text = re.sub(r'(\d+)\s*(시|개|명|살|마리)', time_replacer, text)
 
@@ -411,7 +411,7 @@ def number_to_korean(text):
 def play_audio(text):
     if not text: 
         return
-    
+
     # 1. 태그 제거 (<function=...> 등)
     clean_text = re.sub(r'<[^>]*>', '', text)
 
